@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 from PIL import Image
 from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.base import clone
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
@@ -434,6 +435,83 @@ class SpectrogramSVDClassifier:
         
         return train_accuracy
     
+    def plot_cv_and_training_curves(self, X_train, y_train, X_test, y_test, train_sizes=None):
+        """Plot both CV fold accuracy and training accuracy curve side-by-side."""
+        if self.cv_scores is None:
+            print("No CV scores available. Run train() before plotting.")
+            return
+
+        print("\nGenerating combined training curves plot...")
+        if train_sizes is None:
+            train_sizes = np.linspace(0.1, 1.0, 10)
+
+        train_sizes = np.clip(train_sizes, 0.05, 1.0)
+        train_sizes = np.unique(train_sizes)
+
+        train_acc = []
+        test_acc = []
+        sample_counts = []
+
+        for frac in train_sizes:
+            if float(frac) >= 1.0:
+                X_sub = X_train
+                y_sub = y_train
+            else:
+                X_sub, _, y_sub, _ = train_test_split(
+                    X_train, y_train, train_size=float(frac), random_state=42, stratify=y_train
+                )
+            sample_counts.append(len(X_sub))
+
+            local_scaler = clone(self.scaler)
+            local_pca = clone(self.pca)
+            local_clf = clone(self.classifier)
+
+            X_sub_scaled = local_scaler.fit_transform(X_sub)
+            X_sub_pca = local_pca.fit_transform(X_sub_scaled)
+            local_clf.fit(X_sub_pca, y_sub)
+
+            train_pred = local_clf.predict(X_sub_pca)
+            train_acc.append(accuracy_score(y_sub, train_pred))
+
+            X_test_scaled = local_scaler.transform(X_test)
+            X_test_pca = local_pca.transform(X_test_scaled)
+            test_pred = local_clf.predict(X_test_pca)
+            test_acc.append(accuracy_score(y_test, test_pred))
+
+            print(f"  Training size {len(X_sub)} → train acc {train_acc[-1]:.4f}, test acc {test_acc[-1]:.4f}")
+
+        # Create figure with 2 subplots side-by-side
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+        # Left subplot: CV fold accuracy
+        fold_numbers = np.arange(1, len(self.cv_scores) + 1)
+        ax1.plot(fold_numbers, self.cv_scores, marker='o', linestyle='-', color='tab:blue', linewidth=2, markersize=8)
+        ax1.set_title('Cross-Validation Fold Accuracy', fontsize=14, fontweight='bold')
+        ax1.set_xlabel('Fold', fontsize=12)
+        ax1.set_ylabel('Accuracy', fontsize=12)
+        ax1.set_xticks(fold_numbers)
+        ax1.set_ylim(0.0, 1.0)
+        ax1.grid(True, linestyle='--', alpha=0.5)
+        ax1.axhline(y=self.cv_scores.mean(), color='r', linestyle='--', label=f'Mean: {self.cv_scores.mean():.4f}')
+        ax1.legend()
+
+        # Right subplot: Training accuracy curve
+        ax2.plot(sample_counts, train_acc, marker='o', label='Train Accuracy', linewidth=2, markersize=8)
+        ax2.plot(sample_counts, test_acc, marker='o', label='Test Accuracy', linewidth=2, markersize=8)
+        ax2.set_title('Training Accuracy Curve', fontsize=14, fontweight='bold')
+        ax2.set_xlabel('Training Samples', fontsize=12)
+        ax2.set_ylabel('Accuracy', fontsize=12)
+        ax2.grid(True, linestyle='--', alpha=0.5)
+        ax2.legend()
+        ax2.set_ylim(0.0, 1.0)
+
+        plt.tight_layout()
+        plt.savefig('combined_training_curves.png', dpi=300, bbox_inches='tight')
+        print("Combined training curves plot saved to combined_training_curves.png")
+        plt.close()
+
+        return sample_counts, train_acc, test_acc
+
     def evaluate(self, X, y, y_original):
         """Evaluate the classifier with detailed metrics"""
         print("\nEvaluating classifier on test set...")
@@ -554,6 +632,11 @@ def main():
     print("-" * 70)
     train_accuracy = classifier.train(X_train, y_train)
     
+    # Plot combined CV and training accuracy curves
+    print("\n[3.5/5] TRAINING ANALYSIS")
+    print("-" * 70)
+    classifier.plot_cv_and_training_curves(X_train, y_train, X_test, y_test)
+
     # Evaluate on test set
     print("\n[4/5] EVALUATION")
     print("-" * 70)
